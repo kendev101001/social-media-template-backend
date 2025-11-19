@@ -169,7 +169,14 @@ class Database {
                 [postId],
                 (err, row) => {
                     if (err) reject(err);
-                    else resolve(row);
+                    else if (!row) resolve(null);
+                    else resolve({
+                        id: row.id,
+                        userId: row.user_id,  // Transform to camelCase
+                        content: row.content,
+                        createdAt: row.created_at,
+                        updatedAt: row.updated_at,
+                    });
                 }
             );
         });
