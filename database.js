@@ -57,7 +57,7 @@ class Database {
         if (postsExists) {
             const baselineRan = await this.hasMigrationRun('001_initial_schema');
             if (!baselineRan) {
-                console.log('📦 Existing database detected - establishing baseline');
+                console.log('Existing database detected - establishing baseline');
                 await this.recordMigration('001_initial_schema');
             }
         }
