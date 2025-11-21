@@ -1,4 +1,6 @@
-const sqlite3 = require('sqlite3').verbose(); // Not installed any of these
+
+
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
 class Database {
@@ -7,68 +9,198 @@ class Database {
         this.init();
     }
 
-    init() {
-        // Create tables
-        this.db.serialize(() => {
-            // Users table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          email TEXT UNIQUE NOT NULL,
-          username TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
+    async init() {
+        try {
+            await this.createMigrationsTable();
+            await this.establishBaseline();
+            await this.runMigrations();
+            console.log('Database ready');
+        } catch (error) {
+            console.error('Database initialization failed:', error);
+            throw error;
+        }
+    }
 
-            // Posts table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS posts (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
+    // ==================== MIGRATION SYSTEM ====================
 
-            // Likes table
+    createMigrationsTable() {
+        return new Promise((resolve, reject) => {
             this.db.run(`
-        CREATE TABLE IF NOT EXISTS likes (
-          post_id TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (post_id, user_id),
-          FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
+                CREATE TABLE IF NOT EXISTS migrations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `, (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+    }
 
-            // Comments table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS comments (
-          id TEXT PRIMARY KEY,
-          post_id TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
+    tableExists(tableName) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+                [tableName],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row);
+                }
+            );
+        });
+    }
 
-            // Follows table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS follows (
-          follower_id TEXT NOT NULL,
-          following_id TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (follower_id, following_id),
-          FOREIGN KEY (follower_id) REFERENCES users(id),
-          FOREIGN KEY (following_id) REFERENCES users(id)
-        )
-      `);
+    async establishBaseline() {
+        const postsExists = await this.tableExists('posts');
+
+        if (postsExists) {
+            const baselineRan = await this.hasMigrationRun('001_initial_schema');
+            if (!baselineRan) {
+                console.log('📦 Existing database detected - establishing baseline');
+                await this.recordMigration('001_initial_schema');
+            }
+        }
+    }
+
+    hasMigrationRun(name) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT * FROM migrations WHERE name = ?',
+                [name],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row);
+                }
+            );
+        });
+    }
+
+    recordMigration(name) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                'INSERT INTO migrations (name) VALUES (?)',
+                [name],
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+    }
+
+    async runMigrations() {
+        const migrations = [
+            {
+                id: 1,
+                name: '001_initial_schema',
+                up: () => this.migration_001_initial_schema()
+            },
+            {
+                id: 2,
+                name: '002_add_image_url_to_posts',
+                up: () => this.migration_002_add_image_url_to_posts()
+            },
+            // Add future migrations here
+        ];
+
+        for (const migration of migrations) {
+            const hasRun = await this.hasMigrationRun(migration.name);
+
+            if (!hasRun) {
+                console.log(`Running migration: ${migration.name}`);
+                try {
+                    await migration.up();
+                    await this.recordMigration(migration.name);
+                    console.log(`Completed: ${migration.name}`);
+                } catch (error) {
+                    console.error(`Failed: ${migration.name}`, error);
+                    throw error;
+                }
+            }
+        }
+    }
+
+    // ==================== MIGRATIONS ====================
+
+    migration_001_initial_schema() {
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                // Users table
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS users (
+                        id TEXT PRIMARY KEY,
+                        email TEXT UNIQUE NOT NULL,
+                        username TEXT UNIQUE NOT NULL,
+                        password TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+
+                // Posts table (original version without image_url)
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS posts (
+                        id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                    )
+                `);
+
+                // Likes table
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS likes (
+                        post_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (post_id, user_id),
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                    )
+                `);
+
+                // Comments table
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS comments (
+                        id TEXT PRIMARY KEY,
+                        post_id TEXT NOT NULL,
+                        user_id TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                    )
+                `);
+
+                // Follows table
+                this.db.run(`
+                    CREATE TABLE IF NOT EXISTS follows (
+                        follower_id TEXT NOT NULL,
+                        following_id TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (follower_id, following_id),
+                        FOREIGN KEY (follower_id) REFERENCES users(id),
+                        FOREIGN KEY (following_id) REFERENCES users(id)
+                    )
+                `, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        });
+    }
+
+    migration_002_add_image_url_to_posts() {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                'ALTER TABLE posts ADD COLUMN image_url TEXT',
+                (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
         });
     }
 
@@ -172,8 +304,9 @@ class Database {
                     else if (!row) resolve(null);
                     else resolve({
                         id: row.id,
-                        userId: row.user_id,  // Transform to camelCase
+                        userId: row.user_id,
                         content: row.content,
+                        imageUrl: row.image_url,
                         createdAt: row.created_at,
                         updatedAt: row.updated_at,
                     });
@@ -209,6 +342,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -250,6 +384,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -287,6 +422,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -304,14 +440,15 @@ class Database {
         return new Promise((resolve, reject) => {
             const now = new Date().toISOString();
             this.db.run(
-                'INSERT INTO posts (id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-                [post.id, post.userId, post.content, now, now],
+                'INSERT INTO posts (id, user_id, content, image_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+                [post.id, post.userId, post.content, post.imageUrl || null, now, now],
                 function (err) {
                     if (err) reject(err);
                     else resolve({
                         id: post.id,
                         userId: post.userId,
                         content: post.content,
+                        imageUrl: post.imageUrl,
                         createdAt: now,
                         updatedAt: now,
                     });
