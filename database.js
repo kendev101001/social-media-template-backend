@@ -1,75 +1,10 @@
-const sqlite3 = require('sqlite3').verbose(); // Not installed any of these
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
 class Database {
     constructor() {
         this.db = new sqlite3.Database(path.join(__dirname, 'social_media.db'));
-        this.init();
-    }
-
-    init() {
-        // Create tables
-        this.db.serialize(() => {
-            // Users table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          email TEXT UNIQUE NOT NULL,
-          username TEXT UNIQUE NOT NULL,
-          password TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-
-            // Posts table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS posts (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
-
-            // Likes table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS likes (
-          post_id TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (post_id, user_id),
-          FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
-
-            // Comments table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS comments (
-          id TEXT PRIMARY KEY,
-          post_id TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-          FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-      `);
-
-            // Follows table
-            this.db.run(`
-        CREATE TABLE IF NOT EXISTS follows (
-          follower_id TEXT NOT NULL,
-          following_id TEXT NOT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (follower_id, following_id),
-          FOREIGN KEY (follower_id) REFERENCES users(id),
-          FOREIGN KEY (following_id) REFERENCES users(id)
-        )
-      `);
-        });
+        // Remove init() call - migrations handle schema now
     }
 
     // ==================== USER METHODS ====================
@@ -117,17 +52,17 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-          u.id,
-          u.username,
-          u.email,
-          GROUP_CONCAT(DISTINCT f1.follower_id) as followers,
-          GROUP_CONCAT(DISTINCT f2.following_id) as following
-        FROM users u
-        LEFT JOIN follows f1 ON u.id = f1.following_id
-        LEFT JOIN follows f2 ON u.id = f2.follower_id
-        WHERE u.username LIKE ? AND u.id != ?
-        GROUP BY u.id
-        LIMIT 20`,
+                    u.id,
+                    u.username,
+                    u.email,
+                    GROUP_CONCAT(DISTINCT f1.follower_id) as followers,
+                    GROUP_CONCAT(DISTINCT f2.following_id) as following
+                FROM users u
+                LEFT JOIN follows f1 ON u.id = f1.following_id
+                LEFT JOIN follows f2 ON u.id = f2.follower_id
+                WHERE u.username LIKE ? AND u.id != ?
+                GROUP BY u.id
+                LIMIT 20`,
                 [`%${query}%`, currentUserId],
                 (err, rows) => {
                     if (err) reject(err);
@@ -148,9 +83,9 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.get(
                 `SELECT
-          (SELECT COUNT(*) FROM posts WHERE user_id = ?) as posts,
-          (SELECT COUNT(*) FROM follows WHERE following_id = ?) as followers,
-          (SELECT COUNT(*) FROM follows WHERE follower_id = ?) as following`,
+                    (SELECT COUNT(*) FROM posts WHERE user_id = ?) as posts,
+                    (SELECT COUNT(*) FROM follows WHERE following_id = ?) as followers,
+                    (SELECT COUNT(*) FROM follows WHERE follower_id = ?) as following`,
                 [userId, userId, userId],
                 (err, row) => {
                     if (err) reject(err);
@@ -172,8 +107,9 @@ class Database {
                     else if (!row) resolve(null);
                     else resolve({
                         id: row.id,
-                        userId: row.user_id,  // Transform to camelCase
+                        userId: row.user_id,
                         content: row.content,
+                        imageUrl: row.image_url,  // NEW
                         createdAt: row.created_at,
                         updatedAt: row.updated_at,
                     });
@@ -186,18 +122,18 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-          p.*,
-          u.username,
-          GROUP_CONCAT(DISTINCT l.user_id) as likes
-        FROM posts p
-        JOIN users u ON p.user_id = u.id
-        LEFT JOIN likes l ON p.id = l.post_id
-        WHERE p.user_id IN (
-          SELECT following_id FROM follows WHERE follower_id = ?
-        ) OR p.user_id = ?
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
-        LIMIT 50`,
+                    p.*,
+                    u.username,
+                    GROUP_CONCAT(DISTINCT l.user_id) as likes
+                FROM posts p
+                JOIN users u ON p.user_id = u.id
+                LEFT JOIN likes l ON p.id = l.post_id
+                WHERE p.user_id IN (
+                    SELECT following_id FROM follows WHERE follower_id = ?
+                ) OR p.user_id = ?
+                GROUP BY p.id
+                ORDER BY p.created_at DESC
+                LIMIT 50`,
                 [userId, userId],
                 async (err, rows) => {
                     if (err) reject(err);
@@ -209,6 +145,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,  // NEW
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -226,19 +163,19 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-          p.*,
-          u.username,
-          GROUP_CONCAT(DISTINCT l.user_id) as likes
-        FROM posts p
-        JOIN users u ON p.user_id = u.id
-        LEFT JOIN likes l ON p.id = l.post_id
-        WHERE p.user_id != ? 
-        AND p.user_id NOT IN (
-          SELECT following_id FROM follows WHERE follower_id = ?
-        )
-        GROUP BY p.id
-        ORDER BY RANDOM()
-        LIMIT 50`,
+                    p.*,
+                    u.username,
+                    GROUP_CONCAT(DISTINCT l.user_id) as likes
+                FROM posts p
+                JOIN users u ON p.user_id = u.id
+                LEFT JOIN likes l ON p.id = l.post_id
+                WHERE p.user_id != ? 
+                AND p.user_id NOT IN (
+                    SELECT following_id FROM follows WHERE follower_id = ?
+                )
+                GROUP BY p.id
+                ORDER BY RANDOM()
+                LIMIT 50`,
                 [userId, userId],
                 async (err, rows) => {
                     if (err) reject(err);
@@ -250,6 +187,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,  // NEW
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -267,15 +205,15 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-          p.*,
-          u.username,
-          GROUP_CONCAT(DISTINCT l.user_id) as likes
-        FROM posts p
-        JOIN users u ON p.user_id = u.id
-        LEFT JOIN likes l ON p.id = l.post_id
-        WHERE p.user_id = ?
-        GROUP BY p.id
-        ORDER BY p.created_at DESC`,
+                    p.*,
+                    u.username,
+                    GROUP_CONCAT(DISTINCT l.user_id) as likes
+                FROM posts p
+                JOIN users u ON p.user_id = u.id
+                LEFT JOIN likes l ON p.id = l.post_id
+                WHERE p.user_id = ?
+                GROUP BY p.id
+                ORDER BY p.created_at DESC`,
                 [userId],
                 async (err, rows) => {
                     if (err) reject(err);
@@ -287,6 +225,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
+                                imageUrl: row.image_url,  // NEW
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -300,18 +239,20 @@ class Database {
         });
     }
 
+    // UPDATED: createPost now accepts imageUrl
     createPost(post) {
         return new Promise((resolve, reject) => {
             const now = new Date().toISOString();
             this.db.run(
-                'INSERT INTO posts (id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-                [post.id, post.userId, post.content, now, now],
+                'INSERT INTO posts (id, user_id, content, image_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+                [post.id, post.userId, post.content, post.imageUrl || null, now, now],
                 function (err) {
                     if (err) reject(err);
                     else resolve({
                         id: post.id,
                         userId: post.userId,
                         content: post.content,
+                        imageUrl: post.imageUrl || null,
                         createdAt: now,
                         updatedAt: now,
                     });
@@ -380,12 +321,12 @@ class Database {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-          c.*,
-          u.username
-        FROM comments c
-        JOIN users u ON c.user_id = u.id
-        WHERE c.post_id = ?
-        ORDER BY c.created_at ASC`,
+                    c.*,
+                    u.username
+                FROM comments c
+                JOIN users u ON c.user_id = u.id
+                WHERE c.post_id = ?
+                ORDER BY c.created_at ASC`,
                 [postId],
                 (err, rows) => {
                     if (err) reject(err);

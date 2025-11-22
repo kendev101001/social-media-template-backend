@@ -3,6 +3,9 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const multer = require('multer');  // NEW
+const path = require('path');      // NEW
+const fs = require('fs');          // NEW
 const uuidv4 = () => crypto.randomUUID();
 const Database = require('./database');
 
@@ -15,9 +18,53 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-pro
 // Initialize database
 const db = new Database();
 
-// Middleware
+// ==================== FILE UPLOAD SETUP ====================
+
+// Create uploads directory if it doesn't exist
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// Configure multer for image uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, UPLOADS_DIR);
+    },
+    filename: (req, file, cb) => {
+        // Generate unique filename: timestamp-uuid.extension
+        const ext = path.extname(file.originalname);
+        const filename = `${Date.now()}-${uuidv4()}${ext}`;
+        cb(null, filename);
+    }
+});
+
+// File filter - only allow images
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.'), false);
+    }
+};
+
+const upload = multer({
+    storage,
+    fileFilter,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB max file size
+    }
+});
+
+// ==================== MIDDLEWARE ====================
+
 app.use(cors());
 app.use(express.json());
+
+// Serve uploaded files statically
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -37,6 +84,19 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
+// Error handling middleware for multer
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ message: 'File too large. Maximum size is 10MB.' });
+        }
+        return res.status(400).json({ message: err.message });
+    } else if (err) {
+        return res.status(400).json({ message: err.message });
+    }
+    next();
+};
+
 // ==================== AUTH ROUTES ====================
 
 // Sign up
@@ -44,12 +104,10 @@ app.post('/api/auth/signup', async (req, res) => {
     try {
         const { email, password, username } = req.body;
 
-        // Validate input
         if (!email || !password || !username) {
             return res.status(400).json({ message: 'All fields are required' });
         }
 
-        // Check if user exists
         const existingUser = await db.getUserByEmail(email);
         if (existingUser) {
             return res.status(400).json({ message: 'Email already registered' });
@@ -60,10 +118,8 @@ app.post('/api/auth/signup', async (req, res) => {
             return res.status(400).json({ message: 'Username already taken' });
         }
 
-        // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Create user
         const userId = uuidv4();
         await db.createUser({
             id: userId,
@@ -84,24 +140,20 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        // Validate input
         if (!email || !password) {
             return res.status(400).json({ message: 'Email and password are required' });
         }
 
-        // Get user
         const user = await db.getUserByEmail(email);
         if (!user) {
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
-        // Check password
         const validPassword = await bcrypt.compare(password, user.password);
         if (!validPassword) {
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
-        // Generate token
         const token = jwt.sign(
             { id: user.id, email: user.email, username: user.username },
             JWT_SECRET,
@@ -124,7 +176,7 @@ app.post('/api/auth/login', async (req, res) => {
 
 // ==================== POST ROUTES ====================
 
-// Get feed (posts from followed users)
+// Get feed
 app.get('/api/posts/feed', authenticateToken, async (req, res) => {
     try {
         const posts = await db.getFeedPosts(req.user.id);
@@ -135,7 +187,7 @@ app.get('/api/posts/feed', authenticateToken, async (req, res) => {
     }
 });
 
-// Get explore posts (random posts from non-followed users)
+// Get explore posts
 app.get('/api/posts/explore', authenticateToken, async (req, res) => {
     try {
         const posts = await db.getExplorePosts(req.user.id);
@@ -146,20 +198,31 @@ app.get('/api/posts/explore', authenticateToken, async (req, res) => {
     }
 });
 
-// Create post
-app.post('/api/posts', authenticateToken, async (req, res) => {
+// Create post - UPDATED to handle image uploads
+app.post('/api/posts', authenticateToken, upload.single('image'), handleMulterError, async (req, res) => {
     try {
         const { content } = req.body;
+        const imageFile = req.file;
 
-        if (!content || content.trim().length === 0) {
-            return res.status(400).json({ message: 'Post content is required' });
+        // Validate: must have content or image
+        if ((!content || content.trim().length === 0) && !imageFile) {
+            return res.status(400).json({ message: 'Post must have content or an image' });
         }
 
         const postId = uuidv4();
+
+        // Build image URL if file was uploaded
+        let imageUrl = null;
+        if (imageFile) {
+            // Construct the full URL for the image
+            imageUrl = `/uploads/${imageFile.filename}`;
+        }
+
         const post = await db.createPost({
             id: postId,
             userId: req.user.id,
-            content,
+            content: content || '',
+            imageUrl,
         });
 
         res.status(201).json({
@@ -174,7 +237,7 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
     }
 });
 
-// Delete post
+// Delete post - UPDATED to also delete image file
 app.delete('/api/posts/:postId', authenticateToken, async (req, res) => {
     try {
         const post = await db.getPost(req.params.postId);
@@ -185,6 +248,14 @@ app.delete('/api/posts/:postId', authenticateToken, async (req, res) => {
 
         if (post.userId !== req.user.id) {
             return res.status(403).json({ message: 'Not authorized' });
+        }
+
+        // Delete image file if exists
+        if (post.imageUrl) {
+            const imagePath = path.join(__dirname, post.imageUrl);
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
+            }
         }
 
         await db.deletePost(req.params.postId);
@@ -314,4 +385,5 @@ app.post('/api/users/:userId/follow', authenticateToken, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`API available at http://localhost:${PORT}/api`);
+    console.log(`Uploads served from http://localhost:${PORT}/uploads`);
 });
