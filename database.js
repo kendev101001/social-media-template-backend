@@ -109,7 +109,7 @@ class Database {
                         id: row.id,
                         userId: row.user_id,
                         content: row.content,
-                        imageUrl: row.image_url,  // NEW
+                        imageUrl: row.image_url,
                         createdAt: row.created_at,
                         updatedAt: row.updated_at,
                     });
@@ -145,7 +145,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
-                                imageUrl: row.image_url,  // NEW
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -187,7 +187,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
-                                imageUrl: row.image_url,  // NEW
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,
@@ -225,7 +225,7 @@ class Database {
                                 userId: row.user_id,
                                 username: row.username,
                                 content: row.content,
-                                imageUrl: row.image_url,  // NEW
+                                imageUrl: row.image_url,
                                 likes: row.likes ? row.likes.split(',') : [],
                                 comments: comments,
                                 createdAt: row.created_at,

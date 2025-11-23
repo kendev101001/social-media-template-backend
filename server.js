@@ -1,11 +1,13 @@
+
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const multer = require('multer');  // NEW
-const path = require('path');      // NEW
-const fs = require('fs');          // NEW
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
 const uuidv4 = () => crypto.randomUUID();
 const Database = require('./database');
 
@@ -128,7 +130,20 @@ app.post('/api/auth/signup', async (req, res) => {
             password: hashedPassword,
         });
 
-        res.status(201).json({ message: 'User created successfully' });
+        const token = jwt.sign(
+            { id: userId, email, username },
+            JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.status(201).json({
+            token,
+            user: {
+                id: userId,
+                email,
+                username,
+            },
+        });
     } catch (error) {
         console.error('Signup error:', error);
         res.status(500).json({ message: 'Server error' });
