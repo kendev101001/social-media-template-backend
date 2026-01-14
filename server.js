@@ -396,6 +396,41 @@ app.post('/api/users/:userId/follow', authenticateToken, async (req, res) => {
     }
 });
 
+// Update user profile
+app.put('/api/users/profile', authenticateToken, async (req, res) => {
+    try {
+        const { name, username, bio, link } = req.body;
+        const userId = req.user.id;
+
+        if (!username || username.trim().length === 0) {
+            return res.status(400).json({ message: 'Username is required' });
+        }
+
+        // Check if username is taken by another user
+        const existingUser = await db.getUserByUsername(username);
+        if (existingUser && existingUser.id !== userId) {
+            return res.status(400).json({ message: 'Username already taken' });
+        }
+
+        await db.updateUserProfile(userId, { name, username, bio, link });
+
+        // Fetch and return updated user
+        const updatedUser = await db.getUserById(userId);
+
+        res.json({
+            id: updatedUser.id,
+            email: updatedUser.email,
+            username: updatedUser.username,
+            name: updatedUser.name,
+            bio: updatedUser.bio,
+            link: updatedUser.link
+        });
+    } catch (error) {
+        console.error('Update profile error', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

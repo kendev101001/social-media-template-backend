@@ -1,4 +1,5 @@
 const sqlite3 = require('sqlite3').verbose();
+const { profile } = require('console');
 const path = require('path');
 
 class Database {
@@ -87,6 +88,40 @@ class Database {
                     (SELECT COUNT(*) FROM follows WHERE following_id = ?) as followers,
                     (SELECT COUNT(*) FROM follows WHERE follower_id = ?) as following`,
                 [userId, userId, userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+    }
+
+    updateUserProfile(userId, profileData) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                `UPDATE users
+                SET name = ?, username = ?, bio = ?, link = ?
+                WHERE id = ?`,
+                [
+                    profileData.name || null,
+                    profileData.username,
+                    profileData.bio || null,
+                    profileData.link || null,
+                    userId
+                ],
+                function (err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+    }
+
+    getUserById(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                `SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?`,
+                [userId],
                 (err, row) => {
                     if (err) reject(err);
                     else resolve(row);
