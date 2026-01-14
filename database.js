@@ -96,35 +96,42 @@ class Database {
         });
     }
 
-    updateUserProfile(userId, profileData) {
+    getUserById(userId) {
         return new Promise((resolve, reject) => {
-            this.db.run(
-                `UPDATE users
-                SET name = ?, username = ?, bio = ?, link = ?
-                WHERE id = ?`,
-                [
-                    profileData.name || null,
-                    profileData.username,
-                    profileData.bio || null,
-                    profileData.link || null,
-                    userId
-                ],
-                function (err) {
+            this.db.get(
+                'SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?',
+                [userId],
+                (err, row) => {
                     if (err) reject(err);
-                    else resolve();
+                    else resolve(row);
                 }
             );
         });
     }
 
-    getUserById(userId) {
+    updateUserProfile(userId, profileData) {
         return new Promise((resolve, reject) => {
-            this.db.get(
-                `SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?`,
-                [userId],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
+            const { name, username, bio, link } = profileData;
+
+            this.db.run(
+                `UPDATE users 
+             SET name = ?, username = ?, bio = ?, link = ?
+             WHERE id = ?`,
+                [name || '', username, bio || '', link || '', userId],
+                (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    // Fetch and return the updated user
+                    this.db.get(
+                        'SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?',
+                        [userId],
+                        (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        }
+                    );
                 }
             );
         });

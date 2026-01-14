@@ -7,17 +7,17 @@ module.exports = {
         const columns = tableInfo.map(col => col.name);
 
         if (!columns.includes('name')) {
-            await db.run('ALTER TABLE users ADD COLUMN name TEXT');
+            await db.run('ALTER TABLE users ADD COLUMN name TEXT DEFAULT ""');
             console.log('  Added name column to users table');
         }
 
         if (!columns.includes('bio')) {
-            await db.run('ALTER TABLE users ADD COLUMN bio TEXT');
+            await db.run('ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ""');
             console.log('  Added bio column to users table');
         }
 
         if (!columns.includes('link')) {
-            await db.run('ALTER TABLE users ADD COLUMN link TEXT');
+            await db.run('ALTER TABLE users ADD COLUMN link TEXT DEFAULT ""');
             console.log('  Added link column to users table');
         }
     },
