@@ -445,6 +445,10 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 });
 
 // Get current user profile
+// Not called by frontend yet
+// Useful to refresh profile data directly from server
+// Sync profile with server on app launch to ensure AsyncStorage data matches server
+// Verify that the session is still valid
 app.get('/api/users/profile', authenticateToken, async (req, res) => {
     try {
         const user = await db.getUserById(req.user.id);

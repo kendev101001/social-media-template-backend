@@ -28,7 +28,6 @@ module.exports = {
 
         await db.run('BEGIN TRANSACTION');
 
-        // Why no 'try' for up??
         try {
             await db.run(`
                 CREATE TABLE users_backup (

@@ -4,9 +4,9 @@ module.exports = {
     async up(db) {
         // Check if column already exists (safety check)
         const tableInfo = await db.all('PRAGMA table_info(posts)');
-        const hasImageUrl = tableInfo.some(col => col.name === 'image_url');
+        const columns = tableInfo.map(col => col.name);
 
-        if (!hasImageUrl) {
+        if (!columns.includes('image_url')) {
             await db.run('ALTER TABLE posts ADD COLUMN image_url TEXT');
             console.log('  Added image_url column to posts table');
         } else {
