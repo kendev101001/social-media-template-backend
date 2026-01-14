@@ -142,6 +142,9 @@ app.post('/api/auth/signup', async (req, res) => {
                 id: userId,
                 email,
                 username,
+                name: '',
+                bio: '',
+                link: ''
             },
         });
     } catch (error) {
@@ -181,6 +184,9 @@ app.post('/api/auth/login', async (req, res) => {
                 id: user.id,
                 email: user.email,
                 username: user.username,
+                name: user.name || '',
+                bio: user.bio || '',
+                link: user.link || ''
             },
         });
     } catch (error) {
@@ -392,6 +398,71 @@ app.post('/api/users/:userId/follow', authenticateToken, async (req, res) => {
         res.json({ following: !isFollowing });
     } catch (error) {
         console.error('Follow error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Update user profile
+app.put('/api/users/profile', authenticateToken, async (req, res) => {
+    try {
+        const { name, username, bio, link } = req.body;
+        const userId = req.user.id;
+
+        // Validate username
+        if (!username || username.trim().length === 0) {
+            return res.status(400).json({ message: 'Username is required' });
+        }
+
+        // Check if username is taken by another user
+        const existingUser = await db.getUserByUsername(username);
+        if (existingUser && existingUser.id !== userId) {
+            return res.status(400).json({ message: 'Username already taken' });
+        }
+
+        const updatedUser = await db.updateUserProfile(userId, {
+            name: name || '',
+            username: username.trim(),
+            bio: bio || '',
+            link: link || ''
+        });
+
+        if (!updatedUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.json({
+            id: updatedUser.id,
+            email: updatedUser.email,
+            username: updatedUser.username,
+            name: updatedUser.name || '',
+            bio: updatedUser.bio || '',
+            link: updatedUser.link || ''
+        });
+    } catch (error) {
+        console.error('Update profile error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get current user profile
+app.get('/api/users/profile', authenticateToken, async (req, res) => {
+    try {
+        const user = await db.getUserById(req.user.id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.json({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            name: user.name || '',
+            bio: user.bio || '',
+            link: user.link || ''
+        });
+    } catch (error) {
+        console.error('Get profile error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });

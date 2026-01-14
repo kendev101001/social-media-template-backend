@@ -95,6 +95,47 @@ class Database {
         });
     }
 
+    getUserById(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?',
+                [userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
+    }
+
+    updateUserProfile(userId, profileData) {
+        return new Promise((resolve, reject) => {
+            const { name, username, bio, link } = profileData;
+
+            this.db.run(
+                `UPDATE users 
+             SET name = ?, username = ?, bio = ?, link = ?
+             WHERE id = ?`,
+                [name || '', username, bio || '', link || '', userId],
+                (err) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    // Fetch and return the updated user
+                    this.db.get(
+                        'SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?',
+                        [userId],
+                        (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        }
+                    );
+                }
+            );
+        });
+    }
+
     // ==================== POST METHODS ====================
 
     getPost(postId) {
