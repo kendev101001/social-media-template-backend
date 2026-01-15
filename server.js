@@ -466,32 +466,71 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// Get current user profile
-// Not called by frontend yet
-// Useful to refresh profile data directly from server
-// Sync profile with server on app launch to ensure AsyncStorage data matches server
-// Verify that the session is still valid
-app.get('/api/users/profile', authenticateToken, async (req, res) => {
+// Get user profile (for viewing any user's profile)
+app.get('/api/users/:userId/profile', authenticateToken, async (req, res) => {
     try {
-        const user = await db.getUserById(req.user.id);
+        const targetUserId = req.params.userId;
+        const currentUserId = req.user.id;
+
+        const user = await db.getUserById(targetUserId);
 
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        // Check if current user is following this user
+        const isFollowing = targetUserId === currentUserId 
+            ? false 
+            : await db.isFollowing(currentUserId, targetUserId);
+
+        // Get stats
+        const stats = await db.getUserStats(targetUserId);
+
         res.json({
             id: user.id,
-            email: user.email,
             username: user.username,
             name: user.name || '',
             bio: user.bio || '',
-            link: user.link || ''
+            link: user.link || '',
+            isFollowing,
+            stats: {
+                posts: stats.posts,
+                followers: stats.followers,
+                following: stats.following,
+            }
         });
     } catch (error) {
-        console.error('Get profile error:', error);
+        console.error('Get user profile error:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
+
+// Get current user profile
+// Not called by frontend yet
+// Useful to refresh profile data directly from server
+// Sync profile with server on app launch to ensure AsyncStorage data matches server
+// Verify that the session is still valid
+// app.get('/api/users/profile', authenticateToken, async (req, res) => {
+//     try {
+//         const user = await db.getUserById(req.user.id);
+
+//         if (!user) {
+//             return res.status(404).json({ message: 'User not found' });
+//         }
+
+//         res.json({
+//             id: user.id,
+//             email: user.email,
+//             username: user.username,
+//             name: user.name || '',
+//             bio: user.bio || '',
+//             link: user.link || ''
+//         });
+//     } catch (error) {
+//         console.error('Get profile error:', error);
+//         res.status(500).json({ message: 'Server error' });
+//     }
+// });
 
 // Start server
 app.listen(PORT, () => {
