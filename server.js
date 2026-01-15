@@ -402,6 +402,28 @@ app.post('/api/users/:userId/follow', authenticateToken, async (req, res) => {
     }
 });
 
+// Get user's followers
+app.get('/api/users/:userId/followers', authenticateToken, async (req, res) => {
+    try {
+        const followers = await db.getFollowers(req.params.userId);
+        res.json(followers);
+    } catch (error) {
+        console.error('Get followers error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get who user is following
+app.get('/api/users/:userId/following', authenticateToken, async (req, res) => {
+    try {
+        const following = await db.getFollowing(req.params.userId);
+        res.json(following);
+    } catch (error) {
+        console.error('Get following error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // Update user profile
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
     try {

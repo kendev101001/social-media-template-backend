@@ -448,6 +448,38 @@ class Database {
             );
         });
     }
+
+    getFollowers(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                `SELECT u.id, u.username, u.name, u.bio
+             FROM users u
+             JOIN follows f ON u.id = f.follower_id
+             WHERE f.following_id = ?`,
+                [userId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+    }
+
+    getFollowing(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                `SELECT u.id, u.username, u.name, u.bio
+             FROM users u
+             JOIN follows f ON u.id = f.following_id
+             WHERE f.follower_id = ?`,
+                [userId],
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+    }
 }
 
 module.exports = Database;
