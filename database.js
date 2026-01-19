@@ -238,8 +238,8 @@ class Database {
                 ) OR p.user_id = ?  -- Also include the user's own posts
                 GROUP BY p.id  -- Required for GROUP_CONCAT
                 ORDER BY p.created_at DESC  -- Most recent posts first
-                LIMIT 50`, --Maximum 50 posts
-            [userId, userId],
+                LIMIT 50 --Maximum 50 posts`,
+                [userId, userId],
                 async (err, rows) => {
                     if (err) reject(err);
                     else {
@@ -327,8 +327,8 @@ class Database {
                 LEFT JOIN likes l ON p.id = l.post_id
                 WHERE p.user_id = ?  -- Only posts from this specific user
                 GROUP BY p.id
-                ORDER BY p.created_at DESC`, --Most recent first
-            [userId],
+                ORDER BY p.created_at DESC --Most recent first`,
+                [userId],
                 async (err, rows) => {
                     if (err) reject(err);
                     else {
@@ -464,8 +464,8 @@ class Database {
                 FROM comments c
                 JOIN users u ON c.user_id = u.id  -- Join to get username
                 WHERE c.post_id = ?
-                ORDER BY c.created_at ASC`, --Oldest comments first(chronological order)
-            [postId],
+                ORDER BY c.created_at ASC  --Oldest comments first(chronological order)`,
+                [postId],
                 (err, rows) => {
                     if (err) reject(err);
                     else {
@@ -571,8 +571,8 @@ class Database {
                 `SELECT u.id, u.username, u.name, u.bio
                  FROM users u
                  JOIN follows f ON u.id = f.follower_id  -- Join where user is the follower
-                 WHERE f.following_id = ?`, --Get followers of this user
-            [userId],
+                 WHERE f.following_id = ?  --Get followers of this user`,
+                [userId],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -591,8 +591,8 @@ class Database {
                 `SELECT u.id, u.username, u.name, u.bio
                  FROM users u
                  JOIN follows f ON u.id = f.following_id  -- Join where user is being followed
-                 WHERE f.follower_id = ?`, --Get users that this user follows
-            [userId],
+                 WHERE f.follower_id = ?  --Get users that this user follows`,
+                [userId],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
