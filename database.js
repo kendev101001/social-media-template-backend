@@ -4,25 +4,39 @@ const path = require('path');
 
 class Database {
     constructor() {
+        // Creates or opens a SQLite database file named 'social_media.db' in the same directory
+        // If the file doesn't exist, SQLite will create it automatically
         this.db = new sqlite3.Database(path.join(__dirname, 'social_media.db'));
-        // Remove init() call - migrations handle schema now
     }
 
     // ==================== USER METHODS ====================
 
+    /**
+     * Retrieves a single user record by their email address
+     * SQL: SELECT * FROM users WHERE email = ?
+     * - SELECT * means "get all columns"
+     * - FROM users specifies the table
+     * - WHERE email = ? filters to only rows where email matches the parameter
+     * - ? is a placeholder for parameterized queries (prevents SQL injection)
+     */
     getUserByEmail(email) {
         return new Promise((resolve, reject) => {
+            // db.get() returns only the FIRST matching row (or undefined if no match)
             this.db.get(
                 'SELECT * FROM users WHERE email = ?',
-                [email],
+                [email], // This array replaces the ? placeholders in order
                 (err, row) => {
                     if (err) reject(err);
-                    else resolve(row);
+                    else resolve(row); // row will be undefined if no user found
                 }
             );
         });
     }
 
+    /**
+     * Similar to getUserByEmail but searches by username instead
+     * Returns a single user object or undefined
+     */
     getUserByUsername(username) {
         return new Promise((resolve, reject) => {
             this.db.get(
@@ -36,38 +50,61 @@ class Database {
         });
     }
 
+    /**
+     * Inserts a new user into the users table
+     * SQL: INSERT INTO users (id, email, username, password) VALUES (?, ?, ?, ?)
+     * - INSERT INTO users specifies the table
+     * - (id, email, username, password) lists the columns we're inserting into
+     * - VALUES (?, ?, ?, ?) provides the values for those columns
+     * - Each ? gets replaced by values from the array in order
+     */
     createUser(user) {
         return new Promise((resolve, reject) => {
+            // db.run() executes a query that doesn't return data (INSERT, UPDATE, DELETE)
             this.db.run(
                 'INSERT INTO users (id, email, username, password) VALUES (?, ?, ?, ?)',
                 [user.id, user.email, user.username, user.password],
                 function (err) {
                     if (err) reject(err);
-                    else resolve(user);
+                    else resolve(user); // Returns the user object that was passed in
                 }
             );
         });
     }
 
+    /**
+     * Complex search query that finds users and includes their follower/following relationships
+     * This demonstrates JOIN operations and aggregate functions
+     */
     searchUsers(query, currentUserId) {
         return new Promise((resolve, reject) => {
+            // db.all() returns ALL matching rows (unlike db.get which returns just one)
             this.db.all(
                 `SELECT 
                     u.id,
                     u.username,
                     u.email,
+                    -- GROUP_CONCAT combines multiple rows into a single comma-separated string
+                    -- DISTINCT ensures no duplicate values
                     GROUP_CONCAT(DISTINCT f1.follower_id) as followers,
                     GROUP_CONCAT(DISTINCT f2.following_id) as following
                 FROM users u
+                -- LEFT JOIN includes all users even if they have no followers/following
+                -- f1 gets followers: people who follow this user
                 LEFT JOIN follows f1 ON u.id = f1.following_id
+                -- f2 gets following: people this user follows
                 LEFT JOIN follows f2 ON u.id = f2.follower_id
+                -- LIKE with % wildcards allows partial matching (e.g., '%john%' matches 'johnson', 'john123', etc.)
                 WHERE u.username LIKE ? AND u.id != ?
+                -- GROUP BY is required when using aggregate functions like GROUP_CONCAT
                 GROUP BY u.id
+                -- Limits results to 20 users maximum
                 LIMIT 20`,
-                [`%${query}%`, currentUserId],
+                [`%${query}%`, currentUserId], // %query% allows matching anywhere in username
                 (err, rows) => {
                     if (err) reject(err);
                     else {
+                        // Post-processing: convert comma-separated strings back to arrays
                         const users = rows.map(row => ({
                             ...row,
                             followers: row.followers ? row.followers.split(',') : [],
@@ -80,22 +117,33 @@ class Database {
         });
     }
 
+    /**
+     * Gets statistics for a user using subqueries
+     * Each SELECT COUNT(*) is a separate subquery that counts rows
+     */
     getUserStats(userId) {
         return new Promise((resolve, reject) => {
             this.db.get(
                 `SELECT
+                    -- Subquery 1: counts all posts by this user
                     (SELECT COUNT(*) FROM posts WHERE user_id = ?) as posts,
+                    -- Subquery 2: counts people following this user
                     (SELECT COUNT(*) FROM follows WHERE following_id = ?) as followers,
+                    -- Subquery 3: counts people this user follows
                     (SELECT COUNT(*) FROM follows WHERE follower_id = ?) as following`,
-                [userId, userId, userId],
+                [userId, userId, userId], // Same userId used for all three ? placeholders
                 (err, row) => {
                     if (err) reject(err);
-                    else resolve(row);
+                    else resolve(row); // Returns object like: {posts: 5, followers: 10, following: 8}
                 }
             );
         });
     }
 
+    /**
+     * Gets user profile information (excluding sensitive data like password)
+     * Explicitly lists columns instead of using * for security
+     */
     getUserById(userId) {
         return new Promise((resolve, reject) => {
             this.db.get(
@@ -109,21 +157,26 @@ class Database {
         });
     }
 
+    /**
+     * Updates user profile fields
+     * SQL: UPDATE sets new values for specified columns
+     */
     updateUserProfile(userId, profileData) {
         return new Promise((resolve, reject) => {
             const { name, username, bio, link } = profileData;
 
+            // UPDATE users SET ... WHERE id = ? ensures we only update one user
             this.db.run(
                 `UPDATE users 
-             SET name = ?, username = ?, bio = ?, link = ?
-             WHERE id = ?`,
-                [name || '', username, bio || '', link || '', userId],
+                 SET name = ?, username = ?, bio = ?, link = ?
+                 WHERE id = ?`,
+                [name || '', username, bio || '', link || '', userId], // || '' provides default empty string
                 (err) => {
                     if (err) {
                         reject(err);
                         return;
                     }
-                    // Fetch and return the updated user
+                    // After update, fetch and return the updated user data
                     this.db.get(
                         'SELECT id, email, username, name, bio, link, created_at FROM users WHERE id = ?',
                         [userId],
@@ -139,6 +192,10 @@ class Database {
 
     // ==================== POST METHODS ====================
 
+    /**
+     * Gets a single post by ID
+     * Simple SELECT with WHERE clause
+     */
     getPost(postId) {
         return new Promise((resolve, reject) => {
             this.db.get(
@@ -146,8 +203,9 @@ class Database {
                 [postId],
                 (err, row) => {
                     if (err) reject(err);
-                    else if (!row) resolve(null);
+                    else if (!row) resolve(null); // Explicitly return null if post not found
                     else resolve({
+                        // Remapping column names from snake_case to camelCase
                         id: row.id,
                         userId: row.user_id,
                         content: row.content,
@@ -160,26 +218,32 @@ class Database {
         });
     }
 
+    /**
+     * Gets posts for a user's feed (posts from people they follow + their own posts)
+     * Complex query with multiple JOINs and subquery
+     */
     getFeedPosts(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-                    p.*,
-                    u.username,
-                    GROUP_CONCAT(DISTINCT l.user_id) as likes
+                    p.*,  -- All columns from posts table
+                    u.username,  -- Username from users table
+                    GROUP_CONCAT(DISTINCT l.user_id) as likes  -- List of user IDs who liked this post
                 FROM posts p
-                JOIN users u ON p.user_id = u.id
-                LEFT JOIN likes l ON p.id = l.post_id
+                JOIN users u ON p.user_id = u.id  -- Join to get username
+                LEFT JOIN likes l ON p.id = l.post_id  -- Left join to get likes (posts with no likes still included)
                 WHERE p.user_id IN (
+                    -- Subquery: gets all users that the current user follows
                     SELECT following_id FROM follows WHERE follower_id = ?
-                ) OR p.user_id = ?
-                GROUP BY p.id
-                ORDER BY p.created_at DESC
-                LIMIT 50`,
-                [userId, userId],
+                ) OR p.user_id = ?  -- Also include the user's own posts
+                GROUP BY p.id  -- Required for GROUP_CONCAT
+                ORDER BY p.created_at DESC  -- Most recent posts first
+                LIMIT 50`, --Maximum 50 posts
+            [userId, userId],
                 async (err, rows) => {
                     if (err) reject(err);
                     else {
+                        // For each post, also fetch its comments (separate query)
                         const posts = await Promise.all(rows.map(async row => {
                             const comments = await this.getPostComments(row.id);
                             return {
@@ -188,7 +252,7 @@ class Database {
                                 username: row.username,
                                 content: row.content,
                                 imageUrl: row.image_url,
-                                likes: row.likes ? row.likes.split(',') : [],
+                                likes: row.likes ? row.likes.split(',') : [], // Convert string to array
                                 comments: comments,
                                 createdAt: row.created_at,
                                 updatedAt: row.updated_at,
@@ -201,6 +265,10 @@ class Database {
         });
     }
 
+    /**
+     * Gets random posts from users the current user doesn't follow (for discovery)
+     * Similar to getFeedPosts but with opposite filter logic
+     */
     getExplorePosts(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
@@ -211,12 +279,12 @@ class Database {
                 FROM posts p
                 JOIN users u ON p.user_id = u.id
                 LEFT JOIN likes l ON p.id = l.post_id
-                WHERE p.user_id != ? 
-                AND p.user_id NOT IN (
+                WHERE p.user_id != ?  -- Exclude user's own posts
+                AND p.user_id NOT IN (  -- Exclude posts from people they already follow
                     SELECT following_id FROM follows WHERE follower_id = ?
                 )
                 GROUP BY p.id
-                ORDER BY RANDOM()
+                ORDER BY RANDOM()  -- SQLite function for random ordering
                 LIMIT 50`,
                 [userId, userId],
                 async (err, rows) => {
@@ -243,6 +311,10 @@ class Database {
         });
     }
 
+    /**
+     * Gets all posts from a specific user
+     * Similar to getFeedPosts but filtered to single user
+     */
     getUserPosts(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
@@ -253,10 +325,10 @@ class Database {
                 FROM posts p
                 JOIN users u ON p.user_id = u.id
                 LEFT JOIN likes l ON p.id = l.post_id
-                WHERE p.user_id = ?
+                WHERE p.user_id = ?  -- Only posts from this specific user
                 GROUP BY p.id
-                ORDER BY p.created_at DESC`,
-                [userId],
+                ORDER BY p.created_at DESC`, --Most recent first
+            [userId],
                 async (err, rows) => {
                     if (err) reject(err);
                     else {
@@ -281,10 +353,13 @@ class Database {
         });
     }
 
-    // UPDATED: createPost now accepts imageUrl
+    /**
+     * Creates a new post
+     * Demonstrates INSERT with multiple columns and timestamp handling
+     */
     createPost(post) {
         return new Promise((resolve, reject) => {
-            const now = new Date().toISOString();
+            const now = new Date().toISOString(); // Current timestamp in ISO format
             this.db.run(
                 'INSERT INTO posts (id, user_id, content, image_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
                 [post.id, post.userId, post.content, post.imageUrl || null, now, now],
@@ -303,6 +378,11 @@ class Database {
         });
     }
 
+    /**
+     * Deletes a post
+     * Simple DELETE with WHERE clause
+     * Note: This doesn't handle cascade deletion of likes/comments (should be handled by foreign keys)
+     */
     deletePost(postId) {
         return new Promise((resolve, reject) => {
             this.db.run(
@@ -318,6 +398,10 @@ class Database {
 
     // ==================== LIKE METHODS ====================
 
+    /**
+     * Checks if a user has liked a post
+     * Returns boolean (true if liked, false if not)
+     */
     isPostLiked(postId, userId) {
         return new Promise((resolve, reject) => {
             this.db.get(
@@ -325,12 +409,16 @@ class Database {
                 [postId, userId],
                 (err, row) => {
                     if (err) reject(err);
-                    else resolve(!!row);
+                    else resolve(!!row); // !! converts truthy/falsy to boolean
                 }
             );
         });
     }
 
+    /**
+     * Adds a like to a post
+     * INSERT OR IGNORE prevents duplicate likes (assumes unique constraint on post_id + user_id)
+     */
     likePost(postId, userId) {
         return new Promise((resolve, reject) => {
             this.db.run(
@@ -344,6 +432,10 @@ class Database {
         });
     }
 
+    /**
+     * Removes a like from a post
+     * DELETE with compound WHERE clause (both conditions must match)
+     */
     unlikePost(postId, userId) {
         return new Promise((resolve, reject) => {
             this.db.run(
@@ -359,17 +451,21 @@ class Database {
 
     // ==================== COMMENT METHODS ====================
 
+    /**
+     * Gets all comments for a post with user information
+     * JOIN to include username with each comment
+     */
     getPostComments(postId) {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT 
-                    c.*,
-                    u.username
+                    c.*,  -- All columns from comments table
+                    u.username  -- Username of commenter
                 FROM comments c
-                JOIN users u ON c.user_id = u.id
+                JOIN users u ON c.user_id = u.id  -- Join to get username
                 WHERE c.post_id = ?
-                ORDER BY c.created_at ASC`,
-                [postId],
+                ORDER BY c.created_at ASC`, --Oldest comments first(chronological order)
+            [postId],
                 (err, rows) => {
                     if (err) reject(err);
                     else {
@@ -388,6 +484,10 @@ class Database {
         });
     }
 
+    /**
+     * Adds a new comment to a post
+     * Simple INSERT with timestamp
+     */
     addComment(comment) {
         return new Promise((resolve, reject) => {
             const now = new Date().toISOString();
@@ -410,6 +510,10 @@ class Database {
 
     // ==================== FOLLOW METHODS ====================
 
+    /**
+     * Checks if one user follows another
+     * Returns boolean
+     */
     isFollowing(followerId, followingId) {
         return new Promise((resolve, reject) => {
             this.db.get(
@@ -423,6 +527,10 @@ class Database {
         });
     }
 
+    /**
+     * Creates a follow relationship
+     * INSERT OR IGNORE prevents duplicate follows
+     */
     followUser(followerId, followingId) {
         return new Promise((resolve, reject) => {
             this.db.run(
@@ -436,6 +544,10 @@ class Database {
         });
     }
 
+    /**
+     * Removes a follow relationship
+     * DELETE with compound WHERE
+     */
     unfollowUser(followerId, followingId) {
         return new Promise((resolve, reject) => {
             this.db.run(
@@ -449,14 +561,18 @@ class Database {
         });
     }
 
+    /**
+     * Gets list of users who follow a specific user
+     * JOIN between users and follows tables
+     */
     getFollowers(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT u.id, u.username, u.name, u.bio
-             FROM users u
-             JOIN follows f ON u.id = f.follower_id
-             WHERE f.following_id = ?`,
-                [userId],
+                 FROM users u
+                 JOIN follows f ON u.id = f.follower_id  -- Join where user is the follower
+                 WHERE f.following_id = ?`, --Get followers of this user
+            [userId],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
@@ -465,14 +581,18 @@ class Database {
         });
     }
 
+    /**
+     * Gets list of users that a specific user follows
+     * Similar to getFollowers but with reversed relationship
+     */
     getFollowing(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
                 `SELECT u.id, u.username, u.name, u.bio
-             FROM users u
-             JOIN follows f ON u.id = f.following_id
-             WHERE f.follower_id = ?`,
-                [userId],
+                 FROM users u
+                 JOIN follows f ON u.id = f.following_id  -- Join where user is being followed
+                 WHERE f.follower_id = ?`, --Get users that this user follows
+            [userId],
                 (err, rows) => {
                     if (err) reject(err);
                     else resolve(rows);
