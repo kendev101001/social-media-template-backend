@@ -405,7 +405,7 @@ app.post('/api/users/:userId/follow', authenticateToken, async (req, res) => {
 // Get user's followers
 app.get('/api/users/:userId/followers', authenticateToken, async (req, res) => {
     try {
-        const followers = await db.getFollowers(req.params.userId);
+        const followers = await db.getFollowersWithDetails(req.params.userId);
         res.json(followers);
     } catch (error) {
         console.error('Get followers error:', error);
@@ -416,7 +416,7 @@ app.get('/api/users/:userId/followers', authenticateToken, async (req, res) => {
 // Get who user is following
 app.get('/api/users/:userId/following', authenticateToken, async (req, res) => {
     try {
-        const following = await db.getFollowing(req.params.userId);
+        const following = await db.getFollowingWithDetails(req.params.userId);
         res.json(following);
     } catch (error) {
         console.error('Get following error:', error);
@@ -479,8 +479,8 @@ app.get('/api/users/:userId/profile', authenticateToken, async (req, res) => {
         }
 
         // Check if current user is following this user
-        const isFollowing = targetUserId === currentUserId 
-            ? false 
+        const isFollowing = targetUserId === currentUserId
+            ? false
             : await db.isFollowing(currentUserId, targetUserId);
 
         // Get stats
