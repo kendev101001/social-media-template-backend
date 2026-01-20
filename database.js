@@ -568,14 +568,30 @@ class Database {
     getFollowers(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
-                `SELECT u.id, u.username, u.name, u.bio
-                 FROM users u
-                 JOIN follows f ON u.id = f.follower_id  -- Join where user is the follower
-                 WHERE f.following_id = ?  --Get followers of this user`,
+                `SELECT 
+                u.id, 
+                u.username, 
+                u.name, 
+                u.bio,
+                GROUP_CONCAT(DISTINCT f1.follower_id) as followers,
+                GROUP_CONCAT(DISTINCT f2.following_id) as following
+             FROM users u
+             JOIN follows f ON u.id = f.follower_id
+             LEFT JOIN follows f1 ON u.id = f1.following_id
+             LEFT JOIN follows f2 ON u.id = f2.follower_id
+             WHERE f.following_id = ?
+             GROUP BY u.id`,
                 [userId],
                 (err, rows) => {
                     if (err) reject(err);
-                    else resolve(rows);
+                    else {
+                        const users = rows.map(row => ({
+                            ...row,
+                            followers: row.followers ? row.followers.split(',') : [],
+                            following: row.following ? row.following.split(',') : [],
+                        }));
+                        resolve(users);
+                    }
                 }
             );
         });
@@ -588,14 +604,30 @@ class Database {
     getFollowing(userId) {
         return new Promise((resolve, reject) => {
             this.db.all(
-                `SELECT u.id, u.username, u.name, u.bio
-                 FROM users u
-                 JOIN follows f ON u.id = f.following_id  -- Join where user is being followed
-                 WHERE f.follower_id = ?  --Get users that this user follows`,
+                `SELECT 
+                u.id, 
+                u.username, 
+                u.name, 
+                u.bio,
+                GROUP_CONCAT(DISTINCT f1.follower_id) as followers,
+                GROUP_CONCAT(DISTINCT f2.following_id) as following
+             FROM users u
+             JOIN follows f ON u.id = f.following_id
+             LEFT JOIN follows f1 ON u.id = f1.following_id
+             LEFT JOIN follows f2 ON u.id = f2.follower_id
+             WHERE f.follower_id = ?
+             GROUP BY u.id`,
                 [userId],
                 (err, rows) => {
                     if (err) reject(err);
-                    else resolve(rows);
+                    else {
+                        const users = rows.map(row => ({
+                            ...row,
+                            followers: row.followers ? row.followers.split(',') : [],
+                            following: row.following ? row.following.split(',') : [],
+                        }));
+                        resolve(users);
+                    }
                 }
             );
         });
