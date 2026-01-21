@@ -505,6 +505,48 @@ app.get('/api/users/:userId/profile', authenticateToken, async (req, res) => {
     }
 });
 
+// ==================== BOOKMARK ROUTES ====================
+
+// Toggle bookmark on a post
+app.post('/api/posts/:postId/bookmark', authenticateToken, async (req, res) => {
+    try {
+        const { postId } = req.params;
+        const userId = req.user.id;
+
+        const isBookmarked = await db.isPostBookmarked(postId, userId);
+
+        if (isBookmarked) {
+            await db.unbookmarkPost(postId, userId);
+        } else {
+            await db.bookmarkPost(postId, userId);
+        }
+
+        res.json({ bookmarked: !isBookmarked });
+    } catch (error) {
+        console.error('Bookmark error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get user's bookmarked posts
+app.get('/api/users/:userId/bookmarks', authenticateToken, async (req, res) => {
+    try {
+        const requestedUserId = req.params.userId;
+        const currentUserId = req.user.id;
+
+        // Only allow users to view their own bookmarks (privacy)
+        if (requestedUserId !== currentUserId) {
+            return res.status(403).json({ message: 'You can only view your own bookmarks' });
+        }
+
+        const posts = await db.getBookmarkedPosts(currentUserId);
+        res.json(posts);
+    } catch (error) {
+        console.error('Get bookmarks error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // Get current user profile
 // Not called by frontend yet
 // Useful to refresh profile data directly from server

@@ -696,6 +696,102 @@ class Database {
             );
         });
     }
+
+    // ==================== BOOKMARK METHODS ====================
+
+    /**
+     * Checks if a user has bookmarked a post
+     * Returns boolean (true if bookmarked, false if not)
+     */
+    isPostBookmarked(postId, userId) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT * FROM bookmarks WHERE post_id = ? AND user_id = ?',
+                [postId, userId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row); // !! converts truthy/falsy to boolean
+                }
+            );
+        });
+    }
+
+    /**
+     * Adds a bookmark to a post
+     * INSERT OR IGNORE prevents duplicate bookmarks
+     */
+    bookmarkPost(postId, userId) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                'INSERT OR IGNORE INTO bookmarks (post_id, user_id) VALUES (?, ?)',
+                [postId, userId],
+                function (err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+    }
+
+    /**
+     * Removes a bookmark from a post
+     * DELETE with compound WHERE clause (both conditions must match)
+     */
+    unbookmarkPost(postId, userId) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                'DELETE FROM bookmarks WHERE post_id = ? AND user_id = ?',
+                [postId, userId],
+                function (err) {
+                    if (err) reject(err);
+                    else resolve();
+                }
+            );
+        });
+    }
+
+    /**
+     * Gets all bookmarked posts for a user
+     * Similar to getFeedPosts but filtered to bookmarked posts only
+     */
+    getBookmarkedPosts(userId) {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                `SELECT 
+                p.*,
+                u.username,
+                GROUP_CONCAT(DISTINCT l.user_id) as likes
+            FROM posts p
+            JOIN users u ON p.user_id = u.id
+            JOIN bookmarks b ON p.id = b.post_id
+            LEFT JOIN likes l ON p.id = l.post_id
+            WHERE b.user_id = ?  -- Only bookmarked posts by this user
+            GROUP BY p.id
+            ORDER BY b.created_at DESC  -- Most recently bookmarked first`,
+                [userId],
+                async (err, rows) => {
+                    if (err) reject(err);
+                    else {
+                        const posts = await Promise.all(rows.map(async row => {
+                            const comments = await this.getPostComments(row.id);
+                            return {
+                                id: row.id,
+                                userId: row.user_id,
+                                username: row.username,
+                                content: row.content,
+                                imageUrl: row.image_url,
+                                likes: row.likes ? row.likes.split(',') : [],
+                                comments: comments,
+                                createdAt: row.created_at,
+                                updatedAt: row.updated_at,
+                            };
+                        }));
+                        resolve(posts);
+                    }
+                }
+            );
+        });
+    }
 }
 
 module.exports = Database;
