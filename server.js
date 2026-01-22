@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -7,97 +6,136 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
+const http = require('http');
+const { Server } = require('socket.io');
 const uuidv4 = () => crypto.randomUUID();
 const Database = require('./database');
-
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: { origin: '*', methods: ['GET', 'POST'] }
+});
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this-in-production';
 
 // Initialize database
 const db = new Database();
 
-// ==================== FILE UPLOAD SETUP ====================
+// Store active socket connections by user ID
+const userSockets = new Map();
 
-// Create uploads directory if it doesn't exist
+// ==================== FILE UPLOAD SETUP ====================
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
-
-// Configure multer for image uploads
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, UPLOADS_DIR);
-    },
+    destination: (req, file, cb) => { cb(null, UPLOADS_DIR); },
     filename: (req, file, cb) => {
-        // Generate unique filename: timestamp-uuid.extension
         const ext = path.extname(file.originalname);
         const filename = `${Date.now()}-${uuidv4()}${ext}`;
         cb(null, filename);
     }
 });
-
-// File filter - only allow images
 const fileFilter = (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
     } else {
         cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.'), false);
     }
 };
-
-const upload = multer({
-    storage,
-    fileFilter,
-    limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB max file size
-    }
-});
+const upload = multer({ storage, fileFilter, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ==================== MIDDLEWARE ====================
-
 app.use(cors());
 app.use(express.json());
-
-// Serve uploaded files statically
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Authentication middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ message: 'Access token required' });
-    }
-
+    if (!token) return res.status(401).json({ message: 'Access token required' });
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ message: 'Invalid token' });
-        }
+        if (err) return res.status(403).json({ message: 'Invalid token' });
         req.user = user;
         next();
     });
 };
 
-// Error handling middleware for multer
 const handleMulterError = (err, req, res, next) => {
     if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ message: 'File too large. Maximum size is 10MB.' });
-        }
+        if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ message: 'File too large. Maximum size is 10MB.' });
         return res.status(400).json({ message: err.message });
     } else if (err) {
         return res.status(400).json({ message: err.message });
     }
     next();
 };
+
+// ==================== SOCKET.IO ====================
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) return next(new Error('Authentication error'));
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return next(new Error('Authentication error'));
+        socket.user = user;
+        next();
+    });
+});
+
+io.on('connection', (socket) => {
+    const userId = socket.user.id;
+    console.log(`User connected: ${userId}`);
+    userSockets.set(userId, socket);
+    socket.join(`user:${userId}`);  // Personal room for notifications
+
+    socket.on('join_conversation', async (conversationId) => {
+        if (await db.isParticipant(conversationId, userId)) {
+            socket.join(`conversation:${conversationId}`);
+            console.log(`User ${userId} joined conversation ${conversationId}`);
+        }
+    });
+
+    socket.on('leave_conversation', (conversationId) => {
+        socket.leave(`conversation:${conversationId}`);
+        console.log(`User ${userId} left conversation ${conversationId}`);
+    });
+
+    socket.on('send_message', async (data, callback) => {
+        try {
+            const { conversationId, content } = data;
+            if (!await db.isParticipant(conversationId, userId)) {
+                callback({ error: 'Not authorized' });
+                return;
+            }
+            const messageId = uuidv4();
+            const message = await db.createMessage({ id: messageId, conversationId, senderId: userId, content });
+            message.senderUsername = socket.user.username;
+
+            io.to(`conversation:${conversationId}`).emit('new_message', message);
+
+            const participants = await db.getConversationParticipants(conversationId);
+            participants.forEach(p => {
+                if (p.id !== userId) {
+                    io.to(`user:${p.id}`).emit('conversation_updated', { conversationId, lastMessage: message });
+                }
+            });
+
+            callback({ success: true, message });
+        } catch (error) {
+            console.error('Error sending message:', error);
+            callback({ error: 'Failed to send message' });
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${userId}`);
+        userSockets.delete(userId);
+    });
+});
 
 // ==================== AUTH ROUTES ====================
 
@@ -336,6 +374,90 @@ app.post('/api/posts/:postId/comment', authenticateToken, async (req, res) => {
     }
 });
 
+// ==================== MESSAGING ROUTES ====================
+app.get('/api/conversations', authenticateToken, async (req, res) => {
+    try {
+        const conversations = await db.getUserConversations(req.user.id);
+        res.json(conversations);
+    } catch (error) {
+        console.error('Get conversations error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.post('/api/conversations', authenticateToken, async (req, res) => {
+    try {
+        const { participantId } = req.body;
+        const currentUserId = req.user.id;
+        if (!participantId) return res.status(400).json({ message: 'Participant ID required' });
+        if (participantId === currentUserId) return res.status(400).json({ message: 'Cannot message yourself' });
+        const participant = await db.getUserById(participantId);
+        if (!participant) return res.status(404).json({ message: 'User not found' });
+        const convId = uuidv4();
+        const result = await db.getOrCreateDirectConversation(currentUserId, participantId, convId);
+        const conversation = await db.getConversation(result.id);
+        res.status(result.created ? 201 : 200).json(conversation);
+    } catch (error) {
+        console.error('Create conversation error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.get('/api/conversations/:conversationId', authenticateToken, async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const userId = req.user.id;
+        if (!await db.isParticipant(conversationId, userId)) return res.status(403).json({ message: 'Not authorized' });
+        const conversation = await db.getConversation(conversationId);
+        if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
+        res.json(conversation);
+    } catch (error) {
+        console.error('Get conversation error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.get('/api/conversations/:conversationId/messages', authenticateToken, async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const { limit = 50, before } = req.query;
+        const userId = req.user.id;
+        if (!await db.isParticipant(conversationId, userId)) return res.status(403).json({ message: 'Not authorized' });
+        const messages = await db.getConversationMessages(conversationId, { limit: parseInt(limit), before });
+        res.json(messages);
+    } catch (error) {
+        console.error('Get messages error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+app.post('/api/conversations/:conversationId/messages', authenticateToken, async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const { content } = req.body;
+        const userId = req.user.id;
+        if (!content?.trim()) return res.status(400).json({ message: 'Content required' });
+        if (!await db.isParticipant(conversationId, userId)) return res.status(403).json({ message: 'Not authorized' });
+        const messageId = uuidv4();
+        const message = await db.createMessage({ id: messageId, conversationId, senderId: userId, content: content.trim() });
+        message.senderUsername = req.user.username;
+
+        io.to(`conversation:${conversationId}`).emit('new_message', message);
+
+        const participants = await db.getConversationParticipants(conversationId);
+        participants.forEach(p => {
+            if (p.id !== userId) {
+                io.to(`user:${p.id}`).emit('conversation_updated', { conversationId, lastMessage: message });
+            }
+        });
+
+        res.status(201).json(message);
+    } catch (error) {
+        console.error('Send message error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // ==================== USER ROUTES ====================
 
 // Get user posts
@@ -547,32 +669,6 @@ app.get('/api/users/:userId/bookmarks', authenticateToken, async (req, res) => {
     }
 });
 
-// Get current user profile
-// Not called by frontend yet
-// Useful to refresh profile data directly from server
-// Sync profile with server on app launch to ensure AsyncStorage data matches server
-// Verify that the session is still valid
-// app.get('/api/users/profile', authenticateToken, async (req, res) => {
-//     try {
-//         const user = await db.getUserById(req.user.id);
-
-//         if (!user) {
-//             return res.status(404).json({ message: 'User not found' });
-//         }
-
-//         res.json({
-//             id: user.id,
-//             email: user.email,
-//             username: user.username,
-//             name: user.name || '',
-//             bio: user.bio || '',
-//             link: user.link || ''
-//         });
-//     } catch (error) {
-//         console.error('Get profile error:', error);
-//         res.status(500).json({ message: 'Server error' });
-//     }
-// });
 
 // Start server
 app.listen(PORT, () => {

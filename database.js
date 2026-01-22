@@ -792,6 +792,202 @@ class Database {
             );
         });
     }
+
+    // ==================== MESSAGING METHODS ====================
+    // (Merged: explicit group support, last_message_at for sorting, pagination on messages)
+
+    // Helper: Promise-based db.run
+    run(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.run(sql, params, (err) => err ? reject(err) : resolve());
+        });
+    }
+
+    // Helper: Promise-based db.get
+    get(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+        });
+    }
+
+    // Helper: Promise-based db.all
+    all(sql, params = []) {
+        return new Promise((resolve, reject) => {
+            this.db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+        });
+    }
+
+    async createConversation(id, type = 'direct', name = null) {
+        const now = new Date().toISOString();
+        await this.run(
+            'INSERT INTO conversations (id, type, name, created_at) VALUES (?, ?, ?, ?)',
+            [id, type, name, now]
+        );
+        return { id, type, name, createdAt: now, lastMessageAt: null };
+    }
+
+    async addParticipant(conversationId, userId) {
+        await this.run(
+            'INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)',
+            [conversationId, userId]
+        );
+    }
+
+    async findDirectConversationBetween(userId1, userId2) {
+        const row = await this.get(`
+    SELECT c.id
+    FROM conversations c
+    JOIN conversation_participants cp1 ON c.id = cp1.conversation_id AND cp1.user_id = ?
+    JOIN conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id = ?
+    WHERE c.type = 'direct' 
+      AND (SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = c.id) = 2
+  `, [userId1, userId2]);
+        return row?.id || null;
+    }
+
+    async getOrCreateDirectConversation(user1, user2, newId = require('crypto').randomUUID()) {
+        let convId = await this.findDirectConversationBetween(user1, user2);
+        let created = false;
+
+        if (!convId) {
+            await this.createConversation(newId, 'direct');
+            await this.addParticipant(newId, user1);
+            await this.addParticipant(newId, user2);
+            convId = newId;
+            created = true;
+        }
+
+        return { id: convId, created };
+    }
+
+    getConversation(conversationId) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const row = await this.get('SELECT * FROM conversations WHERE id = ?', [conversationId]);
+                if (!row) return resolve(null);
+                const participants = await this.getConversationParticipants(conversationId);
+                const lastMessage = await this.getLastMessage(conversationId);
+                resolve({
+                    id: row.id,
+                    type: row.type,
+                    name: row.name,
+                    participants,
+                    lastMessage,
+                    createdAt: row.created_at,
+                    lastMessageAt: row.last_message_at
+                });
+            } catch (err) {
+                reject(err);
+            }
+        });
+    }
+
+    getConversationParticipants(conversationId) {
+        return this.all(`
+    SELECT u.id, u.username, u.name
+    FROM users u
+    JOIN conversation_participants cp ON u.id = cp.user_id
+    WHERE cp.conversation_id = ?
+  `, [conversationId]);
+    }
+
+    getLastMessage(conversationId) {
+        return this.get(`
+    SELECT m.*, u.username AS senderUsername
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    WHERE m.conversation_id = ?
+    ORDER BY m.created_at DESC
+    LIMIT 1
+  `, [conversationId]).then(row => row ? {
+            id: row.id,
+            conversationId: row.conversation_id,
+            senderId: row.sender_id,
+            senderUsername: row.senderUsername,
+            content: row.content,
+            createdAt: row.created_at
+        } : null);
+    }
+
+    getUserConversations(userId) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                const rows = await this.all(`
+        SELECT c.*
+        FROM conversations c
+        JOIN conversation_participants cp ON c.id = cp.conversation_id
+        WHERE cp.user_id = ?
+        GROUP BY c.id
+        ORDER BY COALESCE(c.last_message_at, c.created_at) DESC
+      `, [userId]);
+                const convs = await Promise.all(rows.map(r => this.getConversation(r.id)));
+                resolve(convs);
+            } catch (err) {
+                reject(err);
+            }
+        });
+    }
+
+    getConversationMessages(conversationId, { limit = 50, before = null } = {}) {
+        let query = `
+    SELECT m.*, u.username AS senderUsername
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    WHERE m.conversation_id = ?
+  `;
+        const params = [conversationId];
+
+        if (before) {
+            query += ' AND m.created_at < ?';
+            params.push(before);
+        }
+
+        query += ' ORDER BY m.created_at DESC LIMIT ?';
+        params.push(limit);
+
+        return this.all(query, params).then(rows =>
+            rows.reverse().map(r => ({
+                id: r.id,
+                conversationId: r.conversation_id,
+                senderId: r.sender_id,
+                senderUsername: r.senderUsername,
+                content: r.content,
+                createdAt: r.created_at
+            }))
+        );
+    }
+
+    async createMessage({ id, conversationId, senderId, content }) {
+        const now = new Date().toISOString();
+        await this.run(
+            'INSERT INTO messages (id, conversation_id, sender_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+            [id, conversationId, senderId, content, now]
+        );
+        await this.run(
+            'UPDATE conversations SET last_message_at = ? WHERE id = ?',
+            [now, conversationId]
+        );
+
+        return this.get(`
+    SELECT m.*, u.username AS senderUsername
+    FROM messages m JOIN users u ON m.sender_id = u.id
+    WHERE m.id = ?
+  `, [id]).then(row => ({
+            id: row.id,
+            conversationId: row.conversation_id,
+            senderId: row.sender_id,
+            senderUsername: row.senderUsername,
+            content: row.content,
+            createdAt: row.created_at
+        }));
+    }
+
+    isParticipant(conversationId, userId) {
+        return this.get(
+            'SELECT 1 FROM conversation_participants WHERE conversation_id = ? AND user_id = ?',
+            [conversationId, userId]
+        ).then(r => !!r);
+    }
 }
 
 module.exports = Database;
