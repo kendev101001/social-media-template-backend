@@ -671,7 +671,7 @@ app.get('/api/users/:userId/bookmarks', authenticateToken, async (req, res) => {
 
 
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`API available at http://localhost:${PORT}/api`);
     console.log(`Uploads served from http://localhost:${PORT}/uploads`);
